@@ -1,0 +1,46 @@
+name: good_gym
+description: "Good-GYM 安卓版 - AI 健身助手 (RTMPose 实时姿态计数)"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # ONNX 推理 - 直接复用桌面版 .onnx 模型, 无需转换
+  onnxruntime: ^1.4.1
+
+  # 相机与图像处理
+  camera: ^0.11.0
+  image: ^4.1.0
+
+  # 状态管理
+  provider: ^6.1.0
+
+  # 本地存储 (设置/历史记录)
+  shared_preferences: ^2.2.0
+  path_provider: ^2.1.0
+
+  # 权限请求 (相机权限)
+  permission_handler: ^11.3.0
+
+  # 国际化 (中英双语)
+  intl: ^0.19.0
+
+  # 图表 (统计页)
+  fl_chart: ^0.66.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/models/
+    - assets/data/

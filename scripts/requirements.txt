@@ -1,0 +1,38 @@
+# Good-GYM 安卓版模型转换专用依赖
+# 建议在独立的 venv 中安装, 避免与桌面版 PyQt5 环境冲突
+#
+# 创建独立 venv:
+#   python -m venv venv_tflite
+#   .\venv_tflite\Scripts\activate
+#   pip install -r requirements.txt
+
+# ONNX 模型探测与推理
+# 注意: onnx>=1.16 依赖 ml_dtypes>=0.4, 与 tensorflow 2.15 锁定的 ml_dtypes 0.3.2 冲突
+# 故锁定 onnx==1.15.0 (兼容 tensorflow 2.15 的依赖树)
+onnx==1.15.0
+onnxruntime>=1.15.0
+numpy>=1.23.0,<2.0.0
+
+# ONNX -> TF SavedModel 转换 (PINTO 模型转换工具, 对 simcc 友好)
+# 安装时也会自动拉取一系列依赖 (sng4onnx, onnx_graphsurgeon 等)
+onnx2tf>=1.7.0
+
+# TF SavedModel -> TFLite 转换与 int8 量化
+# Windows 下推荐 CPU 版, 体积小
+tensorflow==2.15.*; sys_platform == "win32"
+tensorflow-cpu==2.15.*; sys_platform != "win32"
+
+# TFLite 推理验证 (轻量, 不依赖完整 tensorflow)
+# 注意: Google 不发布 Windows 版 tflite-runtime wheel
+# - Linux/macOS: 安装 tflite-runtime 即可
+# - Windows: 跳过本行, 直接用上面的 tensorflow.lite 模块验证
+tflite-runtime>=2.15.0; sys_platform != "win32" and sys_platform != "cygwin"
+
+# 图像处理 (验证脚本用)
+opencv-python>=4.5.0
+
+# 进度条 (onnx2tf 依赖)
+tqdm>=4.60.0
+
+# 模型可视化 (可选, 调试时用)
+# onnx_graphsurgeon
