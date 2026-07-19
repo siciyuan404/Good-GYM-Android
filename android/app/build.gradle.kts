@@ -6,9 +6,9 @@ plugins {
 
 android {
     namespace = "com.goodgym.good_gym"
-    // onnxruntime 1.4.1 的 Android 模块依赖了 androidx.core:core-ktx:1.13.1 等
-    // 要求 compileSdk >= 34, 这里硬编码到 35 (兼容 Flutter 3.x 默认 toolchain)
-    compileSdk = 35
+    // onnxruntime 1.4.1 / camera / shared_preferences 等插件的 AAR metadata
+    // 要求 compileSdk >= 36, 这里硬编码到 36
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
