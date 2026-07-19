@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.goodgym.good_gym"
-    compileSdk = flutter.compileSdkVersion
+    // onnxruntime 1.4.1 的 Android 模块依赖了 androidx.core:core-ktx:1.13.1 等
+    // 要求 compileSdk >= 34, 这里硬编码到 35 (兼容 Flutter 3.x 默认 toolchain)
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -19,7 +21,7 @@ android {
         applicationId = "com.goodgym.good_gym"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 24  // onnxruntime-mobile Android 要求 minSdk 24+
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
