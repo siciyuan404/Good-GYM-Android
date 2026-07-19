@@ -110,27 +110,29 @@ class PoseDetector {
 
   /// 完整推理: 给定一帧图像, 返回 17 关键点 (RGB 输入)
   ///
-  /// 内部调用同步的 [ort.OrtSession.run] - 由于一帧推理本身耗时,
-  /// 调用方应通过 isolate 或 async 包装以避免阻塞 UI (此处 detect 返回 Future
-  /// 是为了让调用方可以 await, 实际推理仍在调用线程上运行)
+  /// 使用 [OrtSession.runAsync] 把推理推到后台 isolate, 不阻塞 UI thread
+  /// (onnxruntime 1.4.1 的 runAsync 内部维护一个 isolate 持有 session 指针,
+  /// 通过 SendPort 回传结果, 首次调用会有 ~50ms isolate 创建开销)
   Future<PoseResult?> detect(img.Image rgbImage) async {
     if (!_initialized || _yoloxSession == null || _rtmposeSession == null) {
       return null;
     }
 
     // 1. YOLOX 检测
-    final dets = _detectPersons(rgbImage);
+    final dets = await _detectPersons(rgbImage);
     if (dets.isEmpty) return null;
     final best = dets.first; // YOLOX 输出已按 score 排序
 
     // 2. RTMPose 关键点
-    final keypoints = _estimatePose(rgbImage, best);
+    final keypoints = await _estimatePose(rgbImage, best);
     if (keypoints == null) return null;
     return PoseResult(keypoints, best);
   }
 
   /// YOLOX 检测: letterbox 到 416x416, /255, 输出 `List<Detection>`
-  List<Detection> _detectPersons(img.Image rgb) {
+  ///
+  /// 使用 [OrtSession.runAsync] 让推理在后台 isolate 跑, 不阻塞 UI
+  Future<List<Detection>> _detectPersons(img.Image rgb) async {
     final origW = rgb.width;
     final origH = rgb.height;
 
@@ -162,14 +164,14 @@ class PoseDetector {
     final inputs = <String, ort.OrtValue>{'input': inputOrt};
     final runOptions = ort.OrtRunOptions();
 
-    // run() 同步返回 List<OrtValue?>, 顺序按 _outputNames: ['dets', 'labels']
-    final outputs = _yoloxSession!.run(runOptions, inputs);
+    // runAsync 把推理推到后台 isolate, 不阻塞 UI thread
+    final outputs = await _yoloxSession!.runAsync(runOptions, inputs);
 
     // 显式释放输入张量与 run 选项
     inputOrt.release();
     runOptions.release();
 
-    if (outputs.isEmpty) return [];
+    if (outputs == null || outputs.isEmpty) return [];
     final detsRaw = outputs[0]?.value as List;
     final labelsRaw = outputs.length > 1 ? outputs[1]?.value as List : null;
     // 释放输出张量
@@ -207,7 +209,9 @@ class PoseDetector {
   }
 
   /// RTMPose 推理: 取 bbox 区域 crop + resize 到 256x192, simcc 后处理得到 17 关键点
-  List<Float64List>? _estimatePose(img.Image rgb, Detection det) {
+  ///
+  /// 使用 [OrtSession.runAsync] 让推理在后台 isolate 跑, 不阻塞 UI
+  Future<List<Float64List>?> _estimatePose(img.Image rgb, Detection det) async {
     // 1. crop bbox 区域, resize 到 256x192
     final x1 = math.max(0, det.x1.floor());
     final y1 = math.max(0, det.y1.floor());
@@ -240,12 +244,12 @@ class PoseDetector {
     final inputs = <String, ort.OrtValue>{'input': inputOrt};
     final runOptions = ort.OrtRunOptions();
 
-    // run() 同步返回 List<OrtValue?>, 顺序按 _outputNames: ['simcc_x', 'simcc_y']
-    final outputs = _rtmposeSession!.run(runOptions, inputs);
+    // runAsync 把推理推到后台 isolate, 不阻塞 UI thread
+    final outputs = await _rtmposeSession!.runAsync(runOptions, inputs);
 
     inputOrt.release();
     runOptions.release();
-    if (outputs.length < 2) return null;
+    if (outputs == null || outputs.length < 2) return null;
 
     // simcc_x [1, 17, 384], simcc_y [1, 17, 512]
     final simccXRaw = outputs[0]?.value as List;

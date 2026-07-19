@@ -20,6 +20,12 @@ import '../core/exercise_config.dart';
 import '../core/exercise_counter.dart';
 import '../core/pose_detector.dart';
 
+/// 推理最小间隔 (毫秒)
+///
+/// 相机 30fps, 推理跟不上; 姿态计数 7fps 已足够流畅
+/// 此值控制 [processFrame] 节流: 距上次推理 < 此值则跳过
+const int _kMinInferenceIntervalMs = 130; // ~7-8 fps
+
 class TrainingSession extends ChangeNotifier {
   final PoseDetector _detector = PoseDetector();
   final ExerciseCounter _counter = ExerciseCounter();
@@ -51,6 +57,9 @@ class TrainingSession extends ChangeNotifier {
   /// 是否正在处理一帧 (UI 据此跳过新帧, 避免堆积)
   bool _processing = false;
   bool get isProcessing => _processing;
+
+  /// 上次推理开始时间 (用于节流)
+  DateTime _lastInferenceTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// 启动: 加载运动配置 + 初始化模型会话
   Future<void> load() async {
@@ -84,9 +93,20 @@ class TrainingSession extends ChangeNotifier {
 
   /// 处理一帧: 给定已转好的 RGB [img.Image], 推理并更新计数
   ///
-  /// 调用方应检查 [isProcessing] 为 false 再调用, 否则跳过该帧
+  /// 节流策略:
+  /// 1. 如果正在推理中, 直接跳过 (避免堆积)
+  /// 2. 距上次推理 < [_kMinInferenceIntervalMs] 也跳过 (限制推理频率)
+  ///
+  /// 推理本身用 [PoseDetector.detect] 内部的 runAsync 推到后台 isolate,
+  /// 主 isolate 不阻塞, UI 保持 60fps
   Future<void> processFrame(img.Image rgb) async {
     if (_processing || !_detector.isInitialized) return;
+
+    // 时间节流
+    final now = DateTime.now();
+    final elapsed = now.difference(_lastInferenceTime).inMilliseconds;
+    if (elapsed < _kMinInferenceIntervalMs) return;
+    _lastInferenceTime = now;
     _processing = true;
 
     try {
@@ -124,3 +144,4 @@ class TrainingSession extends ChangeNotifier {
     super.dispose();
   }
 }
+
