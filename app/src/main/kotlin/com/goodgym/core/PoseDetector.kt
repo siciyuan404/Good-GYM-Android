@@ -160,9 +160,9 @@ class PoseDetector(private val context: Context) {
         val outputs = session.run(mapOf("input" to inputTensor))
         inputTensor.close()
 
-        val detsRaw = (outputs[0].value as Array<*>)[0] as Array<*>
+        val detsRaw = (outputs.getValue("dets").value as Array<*>)[0] as Array<*>
         // labels 不需要 (只关心 person 类, YOLOX 已过滤)
-        outputs.forEach { it.close() }
+        outputs.values.forEach { it.close() }
 
         val result = mutableListOf<Detection>()
         for (det in detsRaw) {
@@ -232,10 +232,10 @@ class PoseDetector(private val context: Context) {
 
         // simcc_x [1, 17, 384], simcc_y [1, 17, 512]
         @Suppress("UNCHECKED_CAST")
-        val simccX = (outputs[0].value as Array<Array<FloatArray>>)[0]
+        val simccX = (outputs.getValue("simcc_x").value as Array<Array<FloatArray>>)[0]
         @Suppress("UNCHECKED_CAST")
-        val simccY = (outputs[1].value as Array<Array<FloatArray>>)[0]
-        outputs.forEach { it.close() }
+        val simccY = (outputs.getValue("simcc_y").value as Array<Array<FloatArray>>)[0]
+        outputs.values.forEach { it.close() }
 
         // argmax + 缩放回输入坐标
         val keypoints = FloatArray(17 * 2)
