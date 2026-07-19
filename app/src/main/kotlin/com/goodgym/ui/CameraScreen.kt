@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -104,6 +105,15 @@ fun CameraScreen(
                     }
                 },
                 actions = {
+                    // 切换前后置摄像头
+                    TextButton(
+                        onClick = { viewModel.switchCamera() }
+                    ) {
+                        Text(
+                            text = "翻转",
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                     IconButton(onClick = { viewModel.resetCount() }) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -159,13 +169,13 @@ private fun CameraPreviewWithOverlay(viewModel: CameraViewModel) {
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. 骨架叠加层
+        // 2. 骨架叠加层 (前置摄像头需要镜像)
         SkeletonOverlay(
             keypoints = frameState.keypoints,
             imageW = frameState.frameW,
             imageH = frameState.frameH,
             rotationDegrees = frameState.rotationDegrees,
-            mirror = false // 后置相机不镜像
+            mirror = !frameState.lensFacingBack
         )
 
         // 3. 计数 HUD (顶部 + 左下角调试信息)

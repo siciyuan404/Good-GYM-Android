@@ -95,6 +95,15 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 切换前后置摄像头
+     */
+    fun switchCamera() {
+        viewModelScope.launch {
+            cameraManager.switchCamera()
+        }
+    }
+
+    /**
      * 停止相机 (供 CameraScreen 在 dispose 时调用)
      */
     fun stopCamera() {

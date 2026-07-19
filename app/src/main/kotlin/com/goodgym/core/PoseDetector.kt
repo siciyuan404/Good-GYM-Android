@@ -56,9 +56,9 @@ class PoseDetector(private val context: Context) {
         private const val RTMPOSE_INPUT_H = 256
         private const val SIMCC_SPLIT = 2.0f
         private const val CONF_THRESHOLD = 0.5f
-        private const val YOLOX_SCORE_THRESHOLD = 0.5f
+        private const val YOLOX_SCORE_THRESHOLD = 0.3f
 
-        // RTMPose 标准预处理常数 (与 rtmlib 内部一致)
+        // RTMPose 标准预处理常数 (与 rtmlib 内部一致, RGB 顺序)
         private val MEAN = floatArrayOf(123.675f, 116.28f, 103.53f)
         private val STD = floatArrayOf(58.395f, 57.12f, 57.375f)
     }
@@ -125,27 +125,35 @@ class PoseDetector(private val context: Context) {
 
     /**
      * YOLOX 推理: letterbox 到 416x416, /255, 模型已内置 NMS
+     *
+     * YOLOX 训练用 OpenCV 默认 BGR 顺序, 输入 buffer 是 RGB, 这里通道反过来送 BGR
+     * letterbox 居中填充 (短边补 114 灰, 不是 0, 与官方 YOLOX 一致)
      */
     private fun detectPersons(rgb: ByteArray, w: Int, h: Int): List<Detection> {
         val session = yoloxSession ?: return emptyList()
 
-        // letterbox 缩放: 保持长宽比, 短边补 0
+        // letterbox 缩放: 保持长宽比
         val scale = min(YOLOX_INPUT_SIZE.toFloat() / w, YOLOX_INPUT_SIZE.toFloat() / h)
         val newW = (w * scale).toInt()
         val newH = (h * scale).toInt()
+        // 居中填充偏移
+        val dx = (YOLOX_INPUT_SIZE - newW) / 2
+        val dy = (YOLOX_INPUT_SIZE - newH) / 2
 
-        // NCHW float32 [1, 3, 416, 416]
+        // NCHW float32 [1, 3, 416, 416], 填充 114 (YOLOX 标准 padding 灰度)
         val input = FloatArray(3 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE)
-        // 把原图按 letterbox 写入, 不足部分保持 0
+        for (i in input.indices) input[i] = 114f / 255f
+
         for (y in 0 until newH) {
-            val srcY = (y / scale).toInt().coerceAtMost(h - 1)
+            val srcY = (y / scale).toInt().coerceIn(0, h - 1)
             for (x in 0 until newW) {
-                val srcX = (x / scale).toInt().coerceAtMost(w - 1)
+                val srcX = (x / scale).toInt().coerceIn(0, w - 1)
                 val srcIdx = (srcY * w + srcX) * 3
-                // NCHW: 通道在前
-                input[0 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE + y * YOLOX_INPUT_SIZE + x] = (rgb[srcIdx].toInt() and 0xFF) / 255f
-                input[1 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE + y * YOLOX_INPUT_SIZE + x] = (rgb[srcIdx + 1].toInt() and 0xFF) / 255f
-                input[2 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE + y * YOLOX_INPUT_SIZE + x] = (rgb[srcIdx + 2].toInt() and 0xFF) / 255f
+                val dstIdx = y * YOLOX_INPUT_SIZE + x
+                // RGB → BGR (匹配 YOLOX 训练的 OpenCV BGR 顺序)
+                input[0 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE + dstIdx] = (rgb[srcIdx + 2].toInt() and 0xFF) / 255f  // B
+                input[1 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE + dstIdx] = (rgb[srcIdx + 1].toInt() and 0xFF) / 255f  // G
+                input[2 * YOLOX_INPUT_SIZE * YOLOX_INPUT_SIZE + dstIdx] = (rgb[srcIdx].toInt() and 0xFF) / 255f      // R
             }
         }
 
@@ -163,29 +171,46 @@ class PoseDetector(private val context: Context) {
         inputTensor.close()
         try {
             val detsEntry = result.first { it.key == "dets" }
+            // dets 可能是 Array<FloatArray> 或 Array<DoubleArray>, 用反射兼容
+            val detsValue = detsEntry.value.value
+            Log.d(TAG, "dets value class: ${detsValue?.javaClass?.name}")
+
             @Suppress("UNCHECKED_CAST")
-            val detsRaw = (detsEntry.value.value as Array<*>)[0] as Array<*>
-            // labels 不需要 (只关心 person 类, YOLOX 已过滤)
+            val detsRaw = (detsValue as Array<*>)[0] as Array<*>
+            Log.d(TAG, "dets[0] len=${detsRaw.size}, first=${detsRaw.firstOrNull()}")
 
             val list = mutableListOf<Detection>()
             for (det in detsRaw) {
-                @Suppress("UNCHECKED_CAST")
-                val row = det as FloatArray
-                if (row.size < 5) continue
-                val x1 = row[0] / scale  // 反 letterbox
-                val y1 = row[1] / scale
-                val x2 = row[2] / scale
-                val y2 = row[3] / scale
-                val score = row[4]
-                if (score < YOLOX_SCORE_THRESHOLD) continue
-                list.add(Detection(
-                    x1 = x1.coerceIn(0f, w.toFloat()),
-                    y1 = y1.coerceIn(0f, h.toFloat()),
-                    x2 = x2.coerceIn(0f, w.toFloat()),
-                    y2 = y2.coerceIn(0f, h.toFloat()),
-                    score = score
-                ))
+                // YOLOX 输出 FloatArray: [x1, y1, x2, y2, score]
+                when (det) {
+                    is FloatArray -> {
+                        if (det.size < 5) continue
+                        val score = det[4]
+                        if (score < YOLOX_SCORE_THRESHOLD) continue
+                        // 反 letterbox: 减去偏移再除以 scale
+                        list.add(Detection(
+                            x1 = ((det[0] - dx) / scale).coerceIn(0f, w.toFloat()),
+                            y1 = ((det[1] - dy) / scale).coerceIn(0f, h.toFloat()),
+                            x2 = ((det[2] - dx) / scale).coerceIn(0f, w.toFloat()),
+                            y2 = ((det[3] - dy) / scale).coerceIn(0f, h.toFloat()),
+                            score = score
+                        ))
+                    }
+                    is DoubleArray -> {
+                        if (det.size < 5) continue
+                        val score = det[4].toFloat()
+                        if (score < YOLOX_SCORE_THRESHOLD) continue
+                        list.add(Detection(
+                            x1 = ((det[0].toFloat() - dx) / scale).coerceIn(0f, w.toFloat()),
+                            y1 = ((det[1].toFloat() - dy) / scale).coerceIn(0f, h.toFloat()),
+                            x2 = ((det[2].toFloat() - dx) / scale).coerceIn(0f, w.toFloat()),
+                            y2 = ((det[3].toFloat() - dy) / scale).coerceIn(0f, h.toFloat()),
+                            score = score
+                        ))
+                    }
+                }
             }
+            Log.d(TAG, "detected ${list.size} persons, best score=${list.firstOrNull()?.score ?: 0f}")
             // YOLOX 输出可能已按 score 排序, 但保险起见再排一次
             list.sortByDescending { it.score }
             return list

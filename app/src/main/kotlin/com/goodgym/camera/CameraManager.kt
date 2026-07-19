@@ -43,7 +43,8 @@ data class FrameState(
     val frameH: Int = 0,
     val rotationDegrees: Int = 0,
     val fps: Float = 0f,
-    val inferenceMs: Long = 0L
+    val inferenceMs: Long = 0L,
+    val lensFacingBack: Boolean = true
 )
 
 /**
@@ -72,6 +73,13 @@ class CameraManager(
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageAnalysis: ImageAnalysis? = null
     private var preview: Preview? = null
+    private var boundPreviewView: PreviewView? = null
+    private var boundLifecycleOwner: LifecycleOwner? = null
+
+    // 当前镜头方向 (true=后置, false=前置)
+    @Volatile
+    var lensFacingBack: Boolean = true
+        private set
 
     // 单线程后台执行器: 保证推理串行, 不抢 UI 资源
     private val inferenceExecutor = Executors.newSingleThreadExecutor()
@@ -100,11 +108,41 @@ class CameraManager(
     suspend fun start(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val provider = ProcessCameraProvider.getInstance(context).await()
         cameraProvider = provider
+        boundPreviewView = previewView
+        boundLifecycleOwner = lifecycleOwner
+        bindCamera(lensFacingBack)
+    }
+
+    /**
+     * 切换前后置摄像头 (运行时切换, 不需要重新 start)
+     */
+    suspend fun switchCamera() {
+        lensFacingBack = !lensFacingBack
+        val provider = cameraProvider ?: return
+        val pv = boundPreviewView ?: return
+        val owner = boundLifecycleOwner ?: return
+        try {
+            provider.unbindAll()
+            bindCamera(lensFacingBack)
+            Log.i(TAG, "Camera switched: ${if (lensFacingBack) "back" else "front"}")
+        } catch (e: Exception) {
+            Log.e(TAG, "switchCamera failed", e)
+        }
+    }
+
+    /**
+     * 实际绑定 use case 到指定方向摄像头
+     */
+    @SuppressLint("RestrictedApi")
+    private suspend fun bindCamera(back: Boolean) {
+        val provider = cameraProvider ?: return
+        val pv = boundPreviewView ?: return
+        val owner = boundLifecycleOwner ?: return
 
         // 1. Preview use case - 渲染到 PreviewView
         preview = Preview.Builder()
             .build()
-            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            .also { it.setSurfaceProvider(pv.surfaceProvider) }
 
         // 2. ImageAnalysis use case - ML 推理
         // STRATEGY_KEEP_ONLY_LATEST: 上一帧没处理完时, 新帧直接 drop (CameraX 自带 backpressure)
@@ -121,17 +159,18 @@ class CameraManager(
                 }
             }
 
-        // 3. 绑定到生命周期 (后置摄像头)
-        val selector = CameraSelector.DEFAULT_BACK_CAMERA
+        // 3. 绑定到生命周期
+        val selector = if (back) CameraSelector.DEFAULT_BACK_CAMERA
+                       else CameraSelector.DEFAULT_FRONT_CAMERA
         try {
             provider.unbindAll()
             provider.bindToLifecycle(
-                lifecycleOwner,
+                owner,
                 selector,
                 preview,
                 imageAnalysis
             )
-            Log.i(TAG, "Camera bound: ${TARGET_RESOLUTION_W}x${TARGET_RESOLUTION_H}")
+            Log.i(TAG, "Camera bound (${if (back) "back" else "front"}): ${TARGET_RESOLUTION_W}x${TARGET_RESOLUTION_H}")
         } catch (e: Exception) {
             Log.e(TAG, "bindToLifecycle failed", e)
         }
@@ -276,7 +315,8 @@ class CameraManager(
                 frameH = h,
                 rotationDegrees = rotationDegrees,
                 fps = fpsSmoothed,
-                inferenceMs = inferenceMs
+                inferenceMs = inferenceMs,
+                lensFacingBack = lensFacingBack
             )
             return
         }
@@ -297,7 +337,8 @@ class CameraManager(
             frameH = h,
             rotationDegrees = rotationDegrees,
             fps = fpsSmoothed,
-            inferenceMs = inferenceMs
+            inferenceMs = inferenceMs,
+            lensFacingBack = lensFacingBack
         )
     }
 }
