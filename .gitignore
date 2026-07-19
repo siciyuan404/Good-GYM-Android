@@ -1,0 +1,29 @@
+# Gradle / build outputs
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.cxx/
+
+# Kotlin
+.kotlin/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Sensitive
+keystore.properties
+*.keystore
+*.jks
+.commit-msg.txt
