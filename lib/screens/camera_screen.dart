@@ -186,19 +186,21 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _buildCameraStack(TrainingSession session) {
     final controller = _controller!;
-    // 相机预览的固有尺寸 (用于骨架绘制坐标映射)
-    final previewSize = controller.value.previewSize ?? const Size(720, 1280);
-    // CameraPreview 自动按 aspect ratio 适配屏幕
+    // CameraPreview 的固有尺寸来自相机传感器 (previewSize)
+    // 用 AspectRatio 自动按 sensor aspect ratio 缩放到屏幕, 避免变形
+    // 注意: previewSize 是 (width, height) 但 CameraPreview 期望 aspectRatio = height/width
+    // 因为 Android 相机传感器是横置的, 屏幕竖向时预览旋转 90°
+    final previewSize = controller.value.previewSize ?? const Size(640, 480);
+    final aspectRatio = previewSize.height / previewSize.width;
+
     return Stack(
       children: [
-        // 相机预览层 - 独立重绘边界
+        // 相机预览层 - 用 AspectRatio 防变形
         Positioned.fill(
           child: RepaintBoundary(
-            child: FittedBox(
-              fit: BoxFit.contain,
-              child: SizedBox(
-                width: previewSize.width,
-                height: previewSize.height,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: aspectRatio,
                 child: CameraPreview(controller),
               ),
             ),
@@ -230,6 +232,13 @@ class _CameraScreenState extends State<CameraScreen>
           left: 0,
           right: 0,
           child: _StatsBar(session: session),
+        ),
+        // 调试 HUD: 显示推理状态 (后续可移除)
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _DebugHud(session: session),
         ),
       ],
     );
@@ -351,6 +360,46 @@ class _CenterMessage extends StatelessWidget {
             ),
             if (action != null) ...[const SizedBox(height: 16), action!],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 调试 HUD - 显示推理状态帮助定位问题
+/// 显示: 帧尺寸 / 关键点数量 / 检测状态
+class _DebugHud extends StatelessWidget {
+  final TrainingSession session;
+  const _DebugHud({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final frame = session.lastFrame;
+    final kpCount = session.keypoints.length;
+    final status = session.isProcessing
+        ? '推理中'
+        : (kpCount > 0 ? '已检测' : '等待');
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Colors.black54, Colors.transparent],
+        ),
+      ),
+      padding: const EdgeInsets.only(
+          top: 16, left: 16, right: 16, bottom: 16),
+      child: SafeArea(
+        top: false,
+        child: Text(
+          'frame: ${frame?.width ?? 0}x${frame?.height ?? 0}  '
+          'kp: $kpCount  '
+          'status: $status',
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontFamily: 'monospace',
+          ),
         ),
       ),
     );
