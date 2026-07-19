@@ -1,6 +1,6 @@
 package com.goodgym.camera
 
-import android.annotation.WorkerThread
+import androidx.annotation.WorkerThread
 import kotlin.math.max
 import kotlin.math.min
 

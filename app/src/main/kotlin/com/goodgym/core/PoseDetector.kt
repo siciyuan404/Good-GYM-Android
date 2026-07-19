@@ -152,7 +152,7 @@ class PoseDetector(private val context: Context) {
         val inputTensor = OnnxTensor.createTensor(
             env,
             FloatBuffer.wrap(input),
-            longArrayOf(1, 3, YOLOX_INPUT_SIZE, YOLOX_INPUT_SIZE)
+            longArrayOf(1L, 3L, YOLOX_INPUT_SIZE.toLong(), YOLOX_INPUT_SIZE.toLong())
         )
 
         // YOLOX 输出: ['dets', 'labels']
@@ -224,7 +224,7 @@ class PoseDetector(private val context: Context) {
         val inputTensor = OnnxTensor.createTensor(
             env,
             FloatBuffer.wrap(input),
-            longArrayOf(1, 3, RTMPOSE_INPUT_H, RTMPOSE_INPUT_W)
+            longArrayOf(1L, 3L, RTMPOSE_INPUT_H.toLong(), RTMPOSE_INPUT_W.toLong())
         )
 
         val outputs = session.run(mapOf("input" to inputTensor))
