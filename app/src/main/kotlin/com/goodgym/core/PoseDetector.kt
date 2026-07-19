@@ -157,35 +157,41 @@ class PoseDetector(private val context: Context) {
 
         // YOLOX 输出: ['dets', 'labels']
         // dets [1, N, 5] - 已内置 NMS (按 score 降序)
-        val outputs = session.run(mapOf("input" to inputTensor))
+        // Note: OrtSession.run() returns OrtSession.Result which implements
+        // Iterable<Map.Entry<String, OnnxValue>> + AutoCloseable
+        val result = session.run(mapOf("input" to inputTensor))
         inputTensor.close()
-
-        val detsRaw = (outputs.getValue("dets").value as Array<*>)[0] as Array<*>
-        // labels 不需要 (只关心 person 类, YOLOX 已过滤)
-        outputs.values.forEach { it.close() }
-
-        val result = mutableListOf<Detection>()
-        for (det in detsRaw) {
+        try {
+            val detsEntry = result.first { it.key == "dets" }
             @Suppress("UNCHECKED_CAST")
-            val row = det as FloatArray
-            if (row.size < 5) continue
-            val x1 = row[0] / scale  // 反 letterbox
-            val y1 = row[1] / scale
-            val x2 = row[2] / scale
-            val y2 = row[3] / scale
-            val score = row[4]
-            if (score < YOLOX_SCORE_THRESHOLD) continue
-            result.add(Detection(
-                x1 = x1.coerceIn(0f, w.toFloat()),
-                y1 = y1.coerceIn(0f, h.toFloat()),
-                x2 = x2.coerceIn(0f, w.toFloat()),
-                y2 = y2.coerceIn(0f, h.toFloat()),
-                score = score
-            ))
+            val detsRaw = (detsEntry.value.value as Array<*>)[0] as Array<*>
+            // labels 不需要 (只关心 person 类, YOLOX 已过滤)
+
+            val list = mutableListOf<Detection>()
+            for (det in detsRaw) {
+                @Suppress("UNCHECKED_CAST")
+                val row = det as FloatArray
+                if (row.size < 5) continue
+                val x1 = row[0] / scale  // 反 letterbox
+                val y1 = row[1] / scale
+                val x2 = row[2] / scale
+                val y2 = row[3] / scale
+                val score = row[4]
+                if (score < YOLOX_SCORE_THRESHOLD) continue
+                list.add(Detection(
+                    x1 = x1.coerceIn(0f, w.toFloat()),
+                    y1 = y1.coerceIn(0f, h.toFloat()),
+                    x2 = x2.coerceIn(0f, w.toFloat()),
+                    y2 = y2.coerceIn(0f, h.toFloat()),
+                    score = score
+                ))
+            }
+            // YOLOX 输出可能已按 score 排序, 但保险起见再排一次
+            list.sortByDescending { it.score }
+            return list
+        } finally {
+            result.close()
         }
-        // YOLOX 输出可能已按 score 排序, 但保险起见再排一次
-        result.sortByDescending { it.score }
-        return result
     }
 
     /**
@@ -227,39 +233,44 @@ class PoseDetector(private val context: Context) {
             longArrayOf(1L, 3L, RTMPOSE_INPUT_H.toLong(), RTMPOSE_INPUT_W.toLong())
         )
 
-        val outputs = session.run(mapOf("input" to inputTensor))
+        val result = session.run(mapOf("input" to inputTensor))
         inputTensor.close()
 
         // simcc_x [1, 17, 384], simcc_y [1, 17, 512]
-        @Suppress("UNCHECKED_CAST")
-        val simccX = (outputs.getValue("simcc_x").value as Array<Array<FloatArray>>)[0]
-        @Suppress("UNCHECKED_CAST")
-        val simccY = (outputs.getValue("simcc_y").value as Array<Array<FloatArray>>)[0]
-        outputs.values.forEach { it.close() }
+        try {
+            val simccXEntry = result.first { it.key == "simcc_x" }
+            val simccYEntry = result.first { it.key == "simcc_y" }
+            @Suppress("UNCHECKED_CAST")
+            val simccX = (simccXEntry.value.value as Array<Array<FloatArray>>)[0]
+            @Suppress("UNCHECKED_CAST")
+            val simccY = (simccYEntry.value.value as Array<Array<FloatArray>>)[0]
 
-        // argmax + 缩放回输入坐标
-        val keypoints = FloatArray(17 * 2)
-        for (kp in 0 until 17) {
-            val xArr = simccX[kp]
-            val yArr = simccY[kp]
-            var maxX = 0
-            var maxY = 0
-            var maxVX = Float.NEGATIVE_INFINITY
-            var maxVY = Float.NEGATIVE_INFINITY
-            for (i in xArr.indices) {
-                if (xArr[i] > maxVX) { maxVX = xArr[i]; maxX = i }
+            // argmax + 缩放回输入坐标
+            val keypoints = FloatArray(17 * 2)
+            for (kp in 0 until 17) {
+                val xArr = simccX[kp]
+                val yArr = simccY[kp]
+                var maxX = 0
+                var maxY = 0
+                var maxVX = Float.NEGATIVE_INFINITY
+                var maxVY = Float.NEGATIVE_INFINITY
+                for (i in xArr.indices) {
+                    if (xArr[i] > maxVX) { maxVX = xArr[i]; maxX = i }
+                }
+                for (i in yArr.indices) {
+                    if (yArr[i] > maxVY) { maxVY = yArr[i]; maxY = i }
+                }
+                // simccSplit=2.0, 除以得输入坐标系下的位置
+                val poseX = maxX / SIMCC_SPLIT
+                val poseY = maxY / SIMCC_SPLIT
+                // 映射回原图 bbox 区域
+                keypoints[kp * 2] = x1 + poseX / RTMPOSE_INPUT_W * boxW
+                keypoints[kp * 2 + 1] = y1 + poseY / RTMPOSE_INPUT_H * boxH
             }
-            for (i in yArr.indices) {
-                if (yArr[i] > maxVY) { maxVY = yArr[i]; maxY = i }
-            }
-            // simccSplit=2.0, 除以得输入坐标系下的位置
-            val poseX = maxX / SIMCC_SPLIT
-            val poseY = maxY / SIMCC_SPLIT
-            // 映射回原图 bbox 区域
-            keypoints[kp * 2] = x1 + poseX / RTMPOSE_INPUT_W * boxW
-            keypoints[kp * 2 + 1] = y1 + poseY / RTMPOSE_INPUT_H * boxH
+            return keypoints
+        } finally {
+            result.close()
         }
-        return keypoints
     }
 
     private fun readAssetBytes(name: String): ByteArray {
