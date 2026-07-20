@@ -200,8 +200,7 @@ class ExerciseCounter(
         if (baNorm == 0f || bcNorm == 0f) return null
         // clamp 防 acos 出 NaN
         val cos = ((bax * bcx + bay * bcy) / (baNorm * bcNorm))
-            .coerceIn(-1.0, 1.0)
-            .toFloat()
+            .coerceIn(-1.0f, 1.0f)
         return Math.toDegrees(acos(cos.toDouble())).toFloat()
     }
 
