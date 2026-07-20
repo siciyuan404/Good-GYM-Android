@@ -3,6 +3,7 @@ package com.goodgym.camera
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -177,11 +178,14 @@ class CameraManager(
 
         // 2. ImageAnalysis use case - ML 推理
         // STRATEGY_KEEP_ONLY_LATEST: 上一帧没处理完时, 新帧直接 drop (CameraX 自带 backpressure)
+        // setTargetRotation 固定为 ROTATION_0 (portrait), 防止设备旋转时 rotationDegrees 变化
+        // (我们在推理前已按 rotationDegrees 把 RGB 旋转到 portrait, 固定 rotationDegrees=90 让旋转逻辑稳定)
         imageAnalysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setTargetResolution(
                 android.util.Size(TARGET_RESOLUTION_W, TARGET_RESOLUTION_H)
             )
+            .setTargetRotation(Surface.ROTATION_0)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build()
             .also { analysis ->
@@ -314,7 +318,7 @@ class CameraManager(
         w: Int, h: Int, rotationDegrees: Int, frameStartMs: Long
     ) {
         // 1. YUV → RGB (CPU 整数算术, 480p ~2ms)
-        val rgb = try {
+        val rgbRaw = try {
             yuvConverter.yuv420ToRgb(
                 yBytes, uBytes, vBytes,
                 yRowStride = yRowStride,
@@ -327,9 +331,13 @@ class CameraManager(
             return
         }
 
+        // 1.5 顺时针旋转 RGB buffer 到 portrait (匹配 PreviewView 显示方向)
+        // 这样 YOLOX 看到的是正立人体, 检测稳定, 坐标映射也简化
+        val (rgb, rgbW, rgbH) = rotateRgbCw(rgbRaw, w, h, rotationDegrees)
+
         // 2. YOLOX + RTMPose 推理 (NNAPI EP 加速)
         val result: PoseResult? = try {
-            poseDetector.detect(rgb, w, h)
+            poseDetector.detect(rgb, rgbW, rgbH)
         } catch (e: Exception) {
             Log.e(TAG, "inference error", e)
             null
@@ -338,14 +346,16 @@ class CameraManager(
         val inferenceMs = System.currentTimeMillis() - frameStartMs
 
         // 3. 推送状态 (keypoints 拷贝, 防止下一帧覆盖)
+        // 注意: 传给 UI 的 frameW/frameH 是旋转后的 portrait 尺寸, rotationDegrees=0
+        // (旋转已在推理前完成, 骨架坐标已是 portrait 坐标系)
         if (result == null) {
             _state.value = _state.value.copy(
                 keypoints = null,
                 detectionScore = 0f,
                 angle = null,
-                frameW = w,
-                frameH = h,
-                rotationDegrees = rotationDegrees,
+                frameW = rgbW,
+                frameH = rgbH,
+                rotationDegrees = 0,
                 fps = fpsSmoothed,
                 inferenceMs = inferenceMs,
                 lensFacingBack = lensFacingBack,
@@ -366,15 +376,94 @@ class CameraManager(
             detectionScore = result.detection?.score ?: 0f,
             angle = angle,
             count = counter.count,
-            frameW = w,
-            frameH = h,
-            rotationDegrees = rotationDegrees,
+            frameW = rgbW,
+            frameH = rgbH,
+            rotationDegrees = 0,
             fps = fpsSmoothed,
             inferenceMs = inferenceMs,
             lensFacingBack = lensFacingBack,
             debugInfo = poseDetector.lastDebugInfo
         )
     }
+}
+
+/**
+ * 顺时针旋转 RGB buffer (与 CameraX rotationDegrees 一致)
+ *
+ * CameraX 的 rotationDegrees 表示: "需要顺时针旋转多少度才能让图像正立"
+ * - 0°: 不旋转
+ * - 90°: 顺时针 90° (后置 sensor 横屏 → portrait UI)
+ * - 180°: 顺时针 180°
+ * - 270°: 顺时针 270°
+ *
+ * @return (rotatedRgb, newW, newH)
+ */
+private fun rotateRgbCw(rgb: ByteArray, w: Int, h: Int, rotationDegrees: Int): Triple<ByteArray, Int, Int> {
+    if (rotationDegrees == 0) return Triple(rgb, w, h)
+    if (rotationDegrees % 360 == 0) return Triple(rgb, w, h)
+
+    val newW: Int
+    val newH: Int
+    val out: ByteArray
+
+    when (rotationDegrees) {
+        90 -> {
+            // 顺时针 90°: (x, y) → (h - 1 - y, x), 新尺寸 w'=h, h'=w
+            newW = h
+            newH = w
+            out = ByteArray(rgb.size)
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val srcIdx = (y * w + x) * 3
+                    val newX = h - 1 - y
+                    val newY = x
+                    val dstIdx = (newY * newW + newX) * 3
+                    out[dstIdx] = rgb[srcIdx]
+                    out[dstIdx + 1] = rgb[srcIdx + 1]
+                    out[dstIdx + 2] = rgb[srcIdx + 2]
+                }
+            }
+        }
+        180 -> {
+            // 顺时针 180°: (x, y) → (w - 1 - x, h - 1 - y), 尺寸不变
+            newW = w
+            newH = h
+            out = ByteArray(rgb.size)
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val srcIdx = (y * w + x) * 3
+                    val newX = w - 1 - x
+                    val newY = h - 1 - y
+                    val dstIdx = (newY * newW + newX) * 3
+                    out[dstIdx] = rgb[srcIdx]
+                    out[dstIdx + 1] = rgb[srcIdx + 1]
+                    out[dstIdx + 2] = rgb[srcIdx + 2]
+                }
+            }
+        }
+        270 -> {
+            // 顺时针 270° (= 逆时针 90°): (x, y) → (y, w - 1 - x), 新尺寸 w'=h, h'=w
+            newW = h
+            newH = w
+            out = ByteArray(rgb.size)
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val srcIdx = (y * w + x) * 3
+                    val newX = y
+                    val newY = w - 1 - x
+                    val dstIdx = (newY * newW + newX) * 3
+                    out[dstIdx] = rgb[srcIdx]
+                    out[dstIdx + 1] = rgb[srcIdx + 1]
+                    out[dstIdx + 2] = rgb[srcIdx + 2]
+                }
+            }
+        }
+        else -> {
+            // 未知角度, 不旋转
+            return Triple(rgb, w, h)
+        }
+    }
+    return Triple(out, newW, newH)
 }
 
 /**

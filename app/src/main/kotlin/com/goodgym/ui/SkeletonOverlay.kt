@@ -27,19 +27,20 @@ val COCO_SKELETON_PAIRS = listOf(
 /**
  * 骨架绘制层 - 在相机预览上叠加 17 关键点 + 16 条骨骼连线
  *
- * [keypoints] 原图坐标系下的 17 个点 (FloatArray 长度 34, 顺序 x0,y0,x1,y1,...)
- * [imageW]/[imageH] 推理输入图像尺寸 (用于做坐标缩放映射)
- * [rotationDegrees] 相机帧旋转角度 (通常后置 portrait UI 是 90°)
+ * [keypoints] portrait 坐标系下的 17 个点 (FloatArray 长度 34, 顺序 x0,y0,x1,y1,...)
+ * [imageW]/[imageH] 推理输入图像尺寸 (已是 portrait 旋转后, 用于做坐标缩放映射)
+ * [rotationDegrees] 已废弃 (旋转在 CameraManager 推理前完成), 保留参数兼容旧调用
  * [mirror] 是否水平镜像 (前置相机 true, 后置 false)
  *
- * 内部做 contain 缩放: 把 image 坐标系映射到当前 Canvas 尺寸, 保持长宽比 + 居中
+ * 内部做 cover 缩放: 把 image 坐标系映射到当前 Canvas 尺寸, 保持长宽比 + 裁剪超出部分
+ * (与 PreviewView 的 FILL_CENTER 一致, 否则骨架和画面会对不上)
  */
 @Composable
 fun SkeletonOverlay(
     keypoints: FloatArray?,
     imageW: Int,
     imageH: Int,
-    rotationDegrees: Int,
+    @Suppress("UNUSED_PARAMETER") rotationDegrees: Int,
     mirror: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -49,37 +50,19 @@ fun SkeletonOverlay(
         val canvasW = size.width
         val canvasH = size.height
 
-        // 把原图坐标系旋转到 portrait (与 PreviewView 一致)
-        // 后置相机 sensor 横屏, 预览被旋转 90° 显示成 portrait
-        // 推理图像坐标系仍是 sensor 原始方向, 这里做坐标变换
-        data class Pt(val x: Float, val y: Float)
-        val transformed = Array(17) { i ->
-            val ox = keypoints[i * 2]
-            val oy = keypoints[i * 2 + 1]
-            if (ox == 0f && oy == 0f) {
-                Pt(0f, 0f) // 无效点 (低置信度被过滤)
-            } else {
-                when (rotationDegrees) {
-                    90 -> Pt(imageH - oy, ox)         // 顺时针 90°
-                    180 -> Pt(imageW - ox, imageH - oy)
-                    270 -> Pt(oy, imageW - ox)
-                    else -> Pt(ox, oy)
-                }
-            }
-        }
-        // 旋转后的图像"逻辑"尺寸 (用于 contain 缩放)
-        val logicalW = if (rotationDegrees == 90 || rotationDegrees == 270) imageH.toFloat() else imageW.toFloat()
-        val logicalH = if (rotationDegrees == 90 || rotationDegrees == 270) imageW.toFloat() else imageH.toFloat()
+        // cover 缩放: 把 imageW × imageH 等比铺满 canvas (会裁剪超出部分)
+        // 必须用 maxOf 而非 minOf, 否则 contain 缩放会留黑边, 和 PreviewView FILL_CENTER 不一致
+        val scale = maxOf(canvasW / imageW.toFloat(), canvasH / imageH.toFloat())
+        val offsetX = (canvasW - imageW * scale) / 2f
+        val offsetY = (canvasH - imageH * scale) / 2f
 
-        // contain 缩放: 把 logicalW × logicalH 等比塞进 canvasW × canvasH
-        val scale = minOf(canvasW / logicalW, canvasH / logicalH)
-        val offsetX = (canvasW - logicalW * scale) / 2f
-        val offsetY = (canvasH - logicalH * scale) / 2f
-
-        fun mapToCanvas(p: Pt): Offset {
-            var tx = offsetX + p.x * scale
+        // 直接映射, 不再做坐标旋转 (旋转已在 CameraManager 推理前完成)
+        fun mapToCanvas(idx: Int): Offset {
+            val ox = keypoints[idx * 2]
+            val oy = keypoints[idx * 2 + 1]
+            var tx = offsetX + ox * scale
             if (mirror) tx = canvasW - tx
-            val ty = offsetY + p.y * scale
+            val ty = offsetY + oy * scale
             return Offset(tx, ty)
         }
 
@@ -87,13 +70,14 @@ fun SkeletonOverlay(
         val lineStrokeWidth = 4.dp.toPx()
         for ((a, b) in COCO_SKELETON_PAIRS) {
             if (a >= 17 || b >= 17) continue
-            val pa = transformed[a]
-            val pb = transformed[b]
-            if ((pa.x == 0f && pa.y == 0f) || (pb.x == 0f && pb.y == 0f)) continue
+            val ax = keypoints[a * 2]; val ay = keypoints[a * 2 + 1]
+            val bx = keypoints[b * 2]; val by = keypoints[b * 2 + 1]
+            // 跳过无效点 (低置信度置 0)
+            if ((ax == 0f && ay == 0f) || (bx == 0f && by == 0f)) continue
             drawLine(
                 color = AccentCyan,
-                start = mapToCanvas(pa),
-                end = mapToCanvas(pb),
+                start = mapToCanvas(a),
+                end = mapToCanvas(b),
                 strokeWidth = lineStrokeWidth,
                 cap = StrokeCap.Round
             )
@@ -101,12 +85,14 @@ fun SkeletonOverlay(
 
         // 2. 绘制 17 个关键点 (亮黄色实心圆)
         val pointRadius = 6.dp.toPx()
-        for (kp in transformed) {
-            if (kp.x == 0f && kp.y == 0f) continue
+        for (i in 0 until 17) {
+            val x = keypoints[i * 2]
+            val y = keypoints[i * 2 + 1]
+            if (x == 0f && y == 0f) continue
             drawCircle(
                 color = AccentYellow,
                 radius = pointRadius,
-                center = mapToCanvas(kp)
+                center = mapToCanvas(i)
             )
         }
     }
