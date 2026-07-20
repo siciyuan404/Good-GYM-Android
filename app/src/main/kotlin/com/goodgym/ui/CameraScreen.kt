@@ -61,6 +61,7 @@ fun CameraScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val frameState by viewModel.frameState.collectAsState()
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -105,12 +106,12 @@ fun CameraScreen(
                     }
                 },
                 actions = {
-                    // 切换前后置摄像头
+                    // 切换前后置摄像头 (按钮显示当前方向)
                     TextButton(
                         onClick = { viewModel.switchCamera() }
                     ) {
                         Text(
-                            text = "翻转",
+                            text = if (frameState.lensFacingBack) "切前置" else "切后置",
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
@@ -135,17 +136,19 @@ fun CameraScreen(
                 })
             } else {
                 // 相机预览 + 骨架 + HUD
-                CameraPreviewWithOverlay(viewModel = viewModel)
+                CameraPreviewWithOverlay(viewModel = viewModel, frameState = frameState)
             }
         }
     }
 }
 
 @Composable
-private fun CameraPreviewWithOverlay(viewModel: CameraViewModel) {
+private fun CameraPreviewWithOverlay(
+    viewModel: CameraViewModel,
+    frameState: com.goodgym.camera.FrameState
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val frameState by viewModel.frameState.collectAsState()
 
     // 创建 PreviewView
     val previewView = remember {

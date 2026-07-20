@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -115,23 +116,52 @@ class CameraManager(
 
     /**
      * 切换前后置摄像头 (运行时切换, 不需要重新 start)
+     *
+     * 必须在主线程执行 (CameraX 的 bindToLifecycle 要求)
      */
     suspend fun switchCamera() {
-        lensFacingBack = !lensFacingBack
-        val provider = cameraProvider ?: return
-        val pv = boundPreviewView ?: return
-        val owner = boundLifecycleOwner ?: return
+        val provider = cameraProvider ?: run {
+            Log.e(TAG, "switchCamera: cameraProvider is null")
+            return
+        }
+        val targetBack = !lensFacingBack
+
+        // 检查目标摄像头是否存在
+        val targetSelector = if (targetBack) CameraSelector.DEFAULT_BACK_CAMERA
+                             else CameraSelector.DEFAULT_FRONT_CAMERA
         try {
-            provider.unbindAll()
-            bindCamera(lensFacingBack)
-            Log.i(TAG, "Camera switched: ${if (lensFacingBack) "back" else "front"}")
+            if (!provider.hasCamera(targetSelector)) {
+                Log.e(TAG, "switchCamera: target camera not available (back=$targetBack)")
+                return
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "switchCamera failed", e)
+            Log.e(TAG, "switchCamera: hasCamera check failed", e)
+        }
+
+        lensFacingBack = targetBack
+        withContext(Dispatchers.Main) {
+            try {
+                provider.unbindAll()
+                bindCamera(targetBack)
+                Log.i(TAG, "Camera switched to ${if (targetBack) "back" else "front"}")
+            } catch (e: Exception) {
+                Log.e(TAG, "switchCamera bindToLifecycle failed", e)
+                // 失败时回滚到原方向
+                lensFacingBack = !targetBack
+                try {
+                    provider.unbindAll()
+                    bindCamera(lensFacingBack)
+                } catch (e2: Exception) {
+                    Log.e(TAG, "switchCamera rollback failed", e2)
+                }
+            }
         }
     }
 
     /**
      * 实际绑定 use case 到指定方向摄像头
+     *
+     * 必须在主线程调用 (CameraX 要求)
      */
     @SuppressLint("RestrictedApi")
     private suspend fun bindCamera(back: Boolean) {
@@ -172,7 +202,8 @@ class CameraManager(
             )
             Log.i(TAG, "Camera bound (${if (back) "back" else "front"}): ${TARGET_RESOLUTION_W}x${TARGET_RESOLUTION_H}")
         } catch (e: Exception) {
-            Log.e(TAG, "bindToLifecycle failed", e)
+            Log.e(TAG, "bindToLifecycle failed (back=$back)", e)
+            throw e
         }
     }
 
