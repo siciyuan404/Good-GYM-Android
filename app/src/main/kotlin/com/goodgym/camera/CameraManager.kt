@@ -45,7 +45,8 @@ data class FrameState(
     val rotationDegrees: Int = 0,
     val fps: Float = 0f,
     val inferenceMs: Long = 0L,
-    val lensFacingBack: Boolean = true
+    val lensFacingBack: Boolean = true,
+    val debugInfo: String = ""
 )
 
 /**
@@ -347,7 +348,8 @@ class CameraManager(
                 rotationDegrees = rotationDegrees,
                 fps = fpsSmoothed,
                 inferenceMs = inferenceMs,
-                lensFacingBack = lensFacingBack
+                lensFacingBack = lensFacingBack,
+                debugInfo = poseDetector.lastDebugInfo
             )
             return
         }
@@ -369,7 +371,8 @@ class CameraManager(
             rotationDegrees = rotationDegrees,
             fps = fpsSmoothed,
             inferenceMs = inferenceMs,
-            lensFacingBack = lensFacingBack
+            lensFacingBack = lensFacingBack,
+            debugInfo = poseDetector.lastDebugInfo
         )
     }
 }

@@ -187,7 +187,10 @@ private fun CameraPreviewWithOverlay(
             angle = frameState.angle,
             fps = frameState.fps,
             inferenceMs = frameState.inferenceMs,
-            hasKeypoints = frameState.keypoints != null
+            hasKeypoints = frameState.keypoints != null,
+            debugInfo = frameState.debugInfo,
+            frameW = frameState.frameW,
+            frameH = frameState.frameH
         )
     }
 }
@@ -198,7 +201,10 @@ private fun HudOverlay(
     angle: Float?,
     fps: Float,
     inferenceMs: Long,
-    hasKeypoints: Boolean
+    hasKeypoints: Boolean,
+    debugInfo: String = "",
+    frameW: Int = 0,
+    frameH: Int = 0
 ) {
     // 顶部中央: 大号计数
     Box(
@@ -247,6 +253,19 @@ private fun HudOverlay(
             color = Color.White.copy(alpha = 0.6f),
             style = MaterialTheme.typography.bodySmall
         )
+        Text(
+            text = "帧: ${frameW}x${frameH}",
+            color = Color.White.copy(alpha = 0.6f),
+            style = MaterialTheme.typography.bodySmall
+        )
+        if (debugInfo.isNotEmpty()) {
+            Text(
+                text = "YOLOX: $debugInfo",
+                color = Color(0xFFFFEB3B),  // 亮黄, 突出显示
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
