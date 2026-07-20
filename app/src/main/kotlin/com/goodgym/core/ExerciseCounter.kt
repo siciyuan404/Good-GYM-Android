@@ -1,5 +1,6 @@
 package com.goodgym.core
 
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.sqrt
 
@@ -176,7 +177,10 @@ class ExerciseCounter(
     /**
      * 计算三点夹角 - 端点 a, 关节 b, 端点 c
      *
-     * 返回 (0, 180] 度数, 任意点为 (0, 0) 视为无效返回 null
+     * 返回 [0, 180] 度数, 任意点为 (0, 0) 视为无效返回 null
+     *
+     * 用 acos(dot / (|ba| * |bc|)) 保证范围 [0, 180], 与桌面版 Python 一致
+     * (旧版用 atan2(cross, dot) 然后负数加 180, 在叉积为负时会错算成 135° 而非 45°)
      */
     private fun calculateAngle(
         kps: FloatArray, aIdx: Int, bIdx: Int, cIdx: Int
@@ -191,11 +195,14 @@ class ExerciseCounter(
 
         val bax = ax - bx; val bay = ay - by
         val bcx = cx - bx; val bcy = cy - by
-        val dot = bax * bcx + bay * bcy
-        val cross = bax * bcy - bay * bcx
-        var ang = Math.toDegrees(atan2(cross.toDouble(), dot.toDouble())).toFloat()
-        if (ang < 0) ang += 180f
-        return ang
+        val baNorm = sqrt(bax * bax + bay * bay)
+        val bcNorm = sqrt(bcx * bcx + bcy * bcy)
+        if (baNorm == 0f || bcNorm == 0f) return null
+        // clamp 防 acos 出 NaN
+        val cos = ((bax * bcx + bay * bcy) / (baNorm * bcNorm))
+            .coerceIn(-1.0, 1.0)
+            .toFloat()
+        return Math.toDegrees(acos(cos.toDouble())).toFloat()
     }
 
     fun reset() {

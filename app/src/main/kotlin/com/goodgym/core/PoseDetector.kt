@@ -304,6 +304,8 @@ class PoseDetector(private val context: Context) {
             val simccY = (simccYEntry.value.value as Array<Array<FloatArray>>)[0]
 
             // argmax + 缩放回输入坐标
+            // 与 rtmlib get_simcc_maximum 对齐: 低置信度点 (vals<=0) 置 (0,0)
+            // 否则 ExerciseCounter 的 (0,0) 无效点过滤永远不触发
             val keypoints = FloatArray(17 * 2)
             for (kp in 0 until 17) {
                 val xArr = simccX[kp]
@@ -318,12 +320,20 @@ class PoseDetector(private val context: Context) {
                 for (i in yArr.indices) {
                     if (yArr[i] > maxVY) { maxVY = yArr[i]; maxY = i }
                 }
-                // simccSplit=2.0, 除以得输入坐标系下的位置
-                val poseX = maxX / SIMCC_SPLIT
-                val poseY = maxY / SIMCC_SPLIT
-                // 映射回原图 bbox 区域
-                keypoints[kp * 2] = x1 + poseX / RTMPOSE_INPUT_W * boxW
-                keypoints[kp * 2 + 1] = y1 + poseY / RTMPOSE_INPUT_H * boxH
+                // 置信度 = (maxVX + maxVY) / 2, 与 rtmlib 一致
+                val conf = (maxVX + maxVY) / 2f
+                if (conf <= 0f) {
+                    // 低置信度, 标记为 (0,0) (ExerciseCounter 用此判断无效点)
+                    keypoints[kp * 2] = 0f
+                    keypoints[kp * 2 + 1] = 0f
+                } else {
+                    // simccSplit=2.0, 除以得输入坐标系下的位置
+                    val poseX = maxX / SIMCC_SPLIT
+                    val poseY = maxY / SIMCC_SPLIT
+                    // 映射回原图 bbox 区域
+                    keypoints[kp * 2] = x1 + poseX / RTMPOSE_INPUT_W * boxW
+                    keypoints[kp * 2 + 1] = y1 + poseY / RTMPOSE_INPUT_H * boxH
+                }
             }
             return keypoints
         } finally {
